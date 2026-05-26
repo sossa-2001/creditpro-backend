@@ -1,0 +1,227 @@
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+const FEDAPAY_SECRET_KEY = process.env.FEDAPAY_SECRET_KEY;
+const FEDAPAY_ENV = process.env.FEDAPAY_ENVIRONMENT || 'live';
+const FEDAPAY_BASE = FEDAPAY_ENV === 'sandbox'
+  ? 'https://sandbox-api.fedapay.com/v1'
+  : 'https://api.fedapay.com/v1';
+const CALLBACK_URL = process.env.CALLBACK_URL || 'https://suividecredit.app/fedapay-callback';
+
+const COUNTRY_CODES = {
+  '237': 'CM', '225': 'CI', '229': 'BJ',
+  '221': 'SN', '223': 'ML', '226': 'BF',
+  '228': 'TG', '227': 'NE', '224': 'GN',
+  '233': 'GH', '234': 'NG',
+};
+
+function parsePhone(phone) {
+  if (!phone || !phone.startsWith('+')) return null;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return null;
+
+  for (const [code, country] of Object.entries(COUNTRY_CODES)) {
+    if (digits.startsWith(code)) {
+      const local = digits.slice(code.length);
+      const number = parseInt(local, 10);
+      if (!isNaN(number)) {
+        return { number, country };
+      }
+    }
+  }
+  return null;
+}
+
+function splitName(fullName) {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 0) return { firstname: 'Client', lastname: '' };
+  if (parts.length === 1) return { firstname: parts[0], lastname: '' };
+  return {
+    firstname: parts[0],
+    lastname: parts.slice(1).join(' '),
+  };
+}
+
+async function createFedaPayTransaction(data) {
+  const response = await axios.post(
+    `${FEDAPAY_BASE}/transactions`,
+    {
+      description: data.description,
+      amount: data.amount,
+      currency: { iso: 'XOF' },
+      callback_url: CALLBACK_URL,
+      mode: data.mode || 'mtn_open',
+      customer: {
+        firstname: data.customer.firstname,
+        lastname: data.customer.lastname || undefined,
+        phone_number: {
+          number: data.customer.phone_number.number,
+          country: data.customer.phone_number.country,
+        },
+        email: data.customer.email || undefined,
+      },
+    },
+    {
+      headers: {
+        'Authorization': `Bearer ${FEDAPAY_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-User-Agent': 'CreditPro/1.0.0',
+      },
+      timeout: 15000,
+    }
+  );
+  return response.data;
+}
+
+async function getPaymentToken(transactionId) {
+  const response = await axios.post(
+    `${FEDAPAY_BASE}/transactions/${transactionId}/token`,
+    {},
+    {
+      headers: {
+        'Authorization': `Bearer ${FEDAPAY_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      timeout: 10000,
+    }
+  );
+  return response.data;
+}
+
+// ============= ROUTES =============
+
+// Root
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', app: 'CreditPro Backend', environment: FEDAPAY_ENV });
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', environment: FEDAPAY_ENV });
+});
+
+// Create payment (transaction + token)
+app.post('/create-payment', async (req, res) => {
+  try {
+    const { amount, description, customer_name, customer_phone, customer_email, mode } = req.body;
+
+    if (!amount || !description || !customer_name || !customer_phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Champs requis manquants : amount, description, customer_name, customer_phone',
+      });
+    }
+
+    const phone = parsePhone(customer_phone);
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Numéro de téléphone invalide. Format attendu : +229XXXXXXXX',
+      });
+    }
+
+    const name = splitName(customer_name);
+
+    console.log('Creating FedaPay transaction...');
+    console.log('  amount:', amount);
+    console.log('  phone:', JSON.stringify(phone));
+    console.log('  mode:', mode);
+
+    const txn = await createFedaPayTransaction({
+      amount: Math.round(amount),
+      description,
+      mode: mode || 'mtn_open',
+      customer: {
+        firstname: name.firstname,
+        lastname: name.lastname,
+        phone_number: phone,
+        email: customer_email || undefined,
+      },
+    });
+
+    const txnId = txn.id;
+    console.log('Transaction created, id:', txnId);
+
+    const tokenResult = await getPaymentToken(txnId);
+    const paymentUrl = tokenResult.url || '';
+
+    if (!paymentUrl) {
+      return res.status(500).json({
+        success: false,
+        message: 'Impossible de récupérer le lien de paiement',
+      });
+    }
+
+    console.log('Payment URL:', paymentUrl);
+
+    res.json({
+      success: true,
+      transaction_id: txnId,
+      reference: txn.reference || '',
+      payment_url: paymentUrl,
+    });
+
+  } catch (error) {
+    console.error('create-payment error:');
+    if (error.response) {
+      console.error('  status:', error.response.status);
+      console.error('  data:', JSON.stringify(error.response.data));
+      const errData = error.response.data;
+      const message = errData?.message || JSON.stringify(errData?.errors) || 'Erreur FedaPay';
+      return res.status(error.response.status).json({ success: false, message });
+    }
+    console.error('  message:', error.message);
+    res.status(500).json({ success: false, message: 'Erreur serveur: ' + error.message });
+  }
+});
+
+// Verify payment status
+app.get('/verify-payment/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const response = await axios.get(`${FEDAPAY_BASE}/transactions/${id}`, {
+      headers: {
+        'Authorization': `Bearer ${FEDAPAY_SECRET_KEY}`,
+        'Accept': 'application/json',
+      },
+      timeout: 10000,
+    });
+
+    res.json({
+      success: true,
+      transaction: {
+        id: response.data.id,
+        status: response.data.status,
+        reference: response.data.reference,
+        amount: response.data.amount,
+      },
+    });
+  } catch (error) {
+    console.error('verify-payment error:', error.response?.data || error.message);
+    res.status(500).json({ success: false, message: 'Erreur de vérification' });
+  }
+});
+
+// Webhook for FedaPay notifications
+app.post('/webhook', (req, res) => {
+  const event = req.body;
+  console.log('Webhook received:', JSON.stringify(event, null, 2));
+  // TODO: implement logic (update subscription, send notification, etc.)
+  res.sendStatus(200);
+});
+
+app.listen(PORT, () => {
+  console.log(`CreditPro Backend demarre sur le port ${PORT}`);
+  console.log(`Environnement FedaPay: ${FEDAPAY_ENV}`);
+  console.log(`URL API FedaPay: ${FEDAPAY_BASE}`);
+});
