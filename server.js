@@ -148,13 +148,12 @@ app.post('/create-payment', async (req, res) => {
 
     console.log('FedaPay response:', JSON.stringify(txnResponse));
 
-    // Extract transaction from response (handle both direct and wrapped formats)
-    const txn = txnResponse.transaction || txnResponse.data || txnResponse;
+    // The FedaPay API returns the transaction under the "v1/transaction" key
+    const txnWrapper = txnResponse['v1/transaction'];
+    const txn = txnWrapper || txnResponse;
     const txnId = txn.id;
+    const paymentUrl = txn.payment_url || '';
     console.log('Transaction created, id:', txnId);
-
-    const tokenResult = await getPaymentToken(txnId);
-    const paymentUrl = tokenResult.url || '';
 
     if (!paymentUrl) {
       return res.status(500).json({
