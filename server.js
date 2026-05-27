@@ -55,7 +55,6 @@ async function createFedaPayTransaction(data) {
       amount: data.amount,
       currency: { iso: 'XOF' },
       callback_url: CALLBACK_URL,
-      mode: data.mode || 'mtn_open',
       customer: {
         firstname: data.customer.firstname,
         lastname: data.customer.lastname || undefined,
@@ -110,7 +109,7 @@ app.get('/health', (req, res) => {
 // Create payment (transaction + token)
 app.post('/create-payment', async (req, res) => {
   try {
-    const { amount, description, customer_name, customer_phone, customer_email, mode } = req.body;
+    const { amount, description, customer_name, customer_phone, customer_email } = req.body;
 
     if (!amount || !description || !customer_name || !customer_phone) {
       return res.status(400).json({
@@ -132,12 +131,10 @@ app.post('/create-payment', async (req, res) => {
     console.log('Creating FedaPay transaction...');
     console.log('  amount:', amount);
     console.log('  phone:', JSON.stringify(phone));
-    console.log('  mode:', mode);
 
     const txnResponse = await createFedaPayTransaction({
       amount: Math.round(amount),
       description,
-      mode: mode || 'mtn_open',
       customer: {
         firstname: name.firstname,
         lastname: name.lastname,
