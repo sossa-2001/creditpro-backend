@@ -31,10 +31,7 @@ function parsePhone(phone) {
   for (const [code, country] of Object.entries(COUNTRY_CODES)) {
     if (digits.startsWith(code)) {
       const local = digits.slice(code.length);
-      const number = parseInt(local, 10);
-      if (!isNaN(number)) {
-        return { number, country };
-      }
+      return { number: local, country: country.toLowerCase() };
     }
   }
   return null;
