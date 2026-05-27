@@ -137,7 +137,7 @@ app.post('/create-payment', async (req, res) => {
     console.log('  phone:', JSON.stringify(phone));
     console.log('  mode:', mode);
 
-    const txn = await createFedaPayTransaction({
+    const txnResponse = await createFedaPayTransaction({
       amount: Math.round(amount),
       description,
       mode: mode || 'mtn_open',
@@ -149,6 +149,10 @@ app.post('/create-payment', async (req, res) => {
       },
     });
 
+    console.log('FedaPay response:', JSON.stringify(txnResponse));
+
+    // Extract transaction from response (handle both direct and wrapped formats)
+    const txn = txnResponse.transaction || txnResponse.data || txnResponse;
     const txnId = txn.id;
     console.log('Transaction created, id:', txnId);
 
