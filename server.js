@@ -73,7 +73,7 @@ async function createFedaPayTransaction(data) {
         'Accept': 'application/json',
         'X-User-Agent': 'CreditPro/1.0.0',
       },
-      timeout: 15000,
+      timeout: 30000,
     }
   );
   return response.data;
