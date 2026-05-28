@@ -182,7 +182,7 @@ app.post('/create-payment', async (req, res) => {
   }
 });
 
-// Verify payment status
+// Verify payment status by transaction ID
 app.get('/verify-payment/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -194,13 +194,17 @@ app.get('/verify-payment/:id', async (req, res) => {
       timeout: 10000,
     });
 
+    const txnWrapper = response.data['v1/transaction'];
+    const txn = txnWrapper || response.data;
+
     res.json({
       success: true,
+      status: txn.status,
       transaction: {
-        id: response.data.id,
-        status: response.data.status,
-        reference: response.data.reference,
-        amount: response.data.amount,
+        id: txn.id,
+        status: txn.status,
+        reference: txn.reference,
+        amount: txn.amount,
       },
     });
   } catch (error) {
@@ -209,12 +213,29 @@ app.get('/verify-payment/:id', async (req, res) => {
   }
 });
 
-// Webhook for FedaPay notifications
-app.post('/webhook', (req, res) => {
-  const event = req.body;
-  console.log('Webhook received:', JSON.stringify(event, null, 2));
-  // TODO: implement logic (update subscription, send notification, etc.)
-  res.sendStatus(200);
+// Webhook for FedaPay payment notifications
+app.post('/fedapay-webhook', async (req, res) => {
+  try {
+    const event = req.body;
+    console.log('Webhook reçu:', JSON.stringify(event, null, 2));
+
+    if (event.name === 'transaction.approved') {
+      const txn = event.entity;
+      console.log('Paiement confirmé - Transaction ID:', txn.id);
+      console.log('Montant:', txn.amount, 'Référence:', txn.reference);
+      // TODO: stocker dans une base de données (SQLite, etc.)
+      // TODO: notifier le client Flutter si connecté
+    } else if (event.name === 'transaction.declined') {
+      console.log('Paiement refusé:', event.entity?.id);
+    } else if (event.name === 'transaction.canceled') {
+      console.log('Paiement annulé:', event.entity?.id);
+    }
+
+    res.sendStatus(200);
+  } catch (e) {
+    console.error('Webhook error:', e);
+    res.sendStatus(500);
+  }
 });
 
 app.listen(PORT, () => {
