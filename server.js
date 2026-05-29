@@ -14,7 +14,8 @@ const FEDAPAY_ENV = process.env.FEDAPAY_ENVIRONMENT || 'live';
 const FEDAPAY_BASE = FEDAPAY_ENV === 'sandbox'
   ? 'https://sandbox-api.fedapay.com/v1'
   : 'https://api.fedapay.com/v1';
-const CALLBACK_URL = process.env.CALLBACK_URL || 'https://suividecredit.app/fedapay-callback';
+const CALLBACK_URL = process.env.CALLBACK_URL || 'https://creditpro-backend-8qj6.onrender.com/payment-redirect';
+const DEEP_LINK = 'creditpro://payment/status';
 
 const COUNTRY_CODES = {
   '237': 'CM', '225': 'CI', '229': 'BJ',
@@ -211,6 +212,29 @@ app.get('/verify-payment/:id', async (req, res) => {
     console.error('verify-payment error:', error.response?.data || error.message);
     res.status(500).json({ success: false, message: 'Erreur de vérification' });
   }
+});
+
+// FedaPay callback redirect — redirects browser back to the app
+app.get('/payment-redirect', (req, res) => {
+  const status = req.query.status || 'pending';
+  const transaction_id = req.query.id || req.query.transaction_id || '';
+  const redirectUrl = `${DEEP_LINK}?transaction_id=${transaction_id}&status=${status}`;
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Redirection...</title>
+      <script>
+        window.location.href = "${redirectUrl}";
+      </script>
+    </head>
+    <body>
+      <p>Redirection vers CréditPro...</p>
+      <a href="${redirectUrl}">Cliquez ici si la redirection ne fonctionne pas</a>
+    </body>
+    </html>
+  `);
 });
 
 // Webhook for FedaPay payment notifications
